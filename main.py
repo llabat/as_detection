@@ -38,4 +38,6 @@ if __name__ == "__main__":
         lr = float(config["lr"]),
         max_span_len = config["max_span_len"],
         type_loss_weight = config["type_loss_weight"],
+        proj_dim = config["proj_dim"],
+        dropout = config["dropout"],
     )

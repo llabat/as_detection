@@ -9,6 +9,10 @@ import torch.nn.functional as F
 
 from architecture import PartitionSpanSegmenter
 from data_loader import SpanCollator
+from evaluation_span_model import evaluate_f1
+
+import wandb   # W&B
+
 
 def train_partition_segmenter(
     model_name: str,
@@ -21,7 +25,10 @@ def train_partition_segmenter(
     lr: float = 5e-5,
     max_span_len: int = 250,
     type_loss_weight: float = 1.0,
+    proj_dim: int = 768,
+    dropout: float = 0.1,
 ):
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     os.makedirs(out_dir, exist_ok=True)
 
@@ -30,6 +37,8 @@ def train_partition_segmenter(
         model_name=model_name,
         num_types=len(type2id),
         max_span_len=max_span_len,
+        proj_dim=proj_dim,
+        dropout=dropout
     ).to(device)
 
     collator = SpanCollator(tokenizer)
@@ -46,12 +55,21 @@ def train_partition_segmenter(
         num_training_steps=max_train_steps,
     )
 
-    best_val = float("inf")
+    id2type = {v: k for k, v in type2id.items()}
+    best_path = os.path.join(out_dir, "best.pt")
+
+    # ----------------------------
+    # For tracking training loss
+    # ----------------------------
+    running_loss = 0.0
 
     for epoch in range(1, num_epochs + 1):
         # ---------------- TRAIN ----------------
         model.train()
         progress = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs}", leave=True)
+
+        batch_count = 0
+        running_loss = 0.0
 
         for batch in progress:
             input_ids      = batch["input_ids"].to(device)
@@ -76,41 +94,35 @@ def train_partition_segmenter(
             optimizer.step()
             scheduler.step()
 
+            # Track average training loss
+            running_loss += loss.item()
+            batch_count += 1
+
             progress.set_postfix(
                 loss=f"{loss.item():.4f}",
                 end=f"{outputs['loss_end'].item():.4f}",
                 type=f"{outputs['loss_type'].item():.4f}",
             )
 
+        avg_train_loss = running_loss / batch_count
+
         # ---------------- VALID ----------------
         model.eval()
-        val_sum = 0.0
-        val_n = 0
+        val_f1 = evaluate_f1(model, valid_loader, tokenizer, type2id, id2type, max_span_len)
+        print(f"Epoch {epoch}: validation micro-F1 = {val_f1:.4f}")
 
-        with torch.no_grad():
-            for batch in valid_loader:
-                input_ids      = batch["input_ids"].to(device)
-                attention_mask = batch["attention_mask"].to(device)
-                
-                outputs = model(
-                    input_ids=input_ids,
-                    attention_mask=attention_mask,
-                    span_starts=batch["span_starts"],
-                    span_ends=batch["span_ends"],
-                    span_types=batch["span_types"],
-                    type_loss_weight=type_loss_weight,
-                )
+        # ---------------- W&B logging ----------------
+        if wandb.run is not None:    # only if inside wandb.init()
+            wandb.log({
+                "epoch": epoch,
+                "train_loss": avg_train_loss,
+                "val_f1": val_f1,
+            })
 
-                val_sum += outputs["loss"].item()
-                val_n += 1
-
-        avg_val = val_sum / max(1, val_n)
-        print(f"Epoch {epoch}/{num_epochs} - valid loss: {avg_val:.4f}")
-
-        if avg_val < best_val:
-            best_val = avg_val
-            best_path = os.path.join(out_dir, "best.pt")
+        # ---------------- Save best ----------------
+        if val_f1 > model.best_val_f1:
+            model.best_val_f1 = val_f1
             torch.save(model.state_dict(), best_path)
-            print(f"  ✅ saved new best to {best_path}")
+            print("  ✓ saved new best model")
 
     return model, tokenizer

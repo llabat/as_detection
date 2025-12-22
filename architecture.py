@@ -10,24 +10,41 @@ from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warm
 
 
 class SpanHead(nn.Module):
-    """
-    Shared span representation -> scalar span score + type logits.
-    """
-    def __init__(self, span_hidden_size: int, num_types: int):
+
+    def __init__(self, span_hidden_size: int, num_types: int,
+                 proj_dim: int = 768, dropout: float = 0.1):
         super().__init__()
-        self.ff = nn.Sequential(
-            nn.Linear(span_hidden_size, span_hidden_size),
+        
+        # Normalize heterogeneous concatenation
+        self.pre_norm = nn.LayerNorm(span_hidden_size)
+
+        # Nonlinear projection layer
+        self.proj = nn.Sequential(
+            nn.Linear(span_hidden_size, proj_dim),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(dropout),
         )
-        self.span_score = nn.Linear(span_hidden_size, 1)     # scalar score
-        self.type_head  = nn.Linear(span_hidden_size, num_types)  # type logits
+
+        # FF block in projected space
+        self.ff = nn.Sequential(
+            nn.Linear(proj_dim, proj_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+        )
+
+        # Final heads
+        self.span_score = nn.Linear(proj_dim, 1)
+        self.type_head  = nn.Linear(proj_dim, num_types)
+        self.best_val_f1 = 0.0
 
     def forward(self, span_repr: torch.Tensor):
-        h = self.ff(span_repr)
-        scores = self.span_score(h).squeeze(-1)   # (N,)
-        type_logits = self.type_head(h)           # (N, K)
+        span_repr = self.pre_norm(span_repr)   # ★ important
+        h = self.proj(span_repr)               # nonlinear projection
+        h = self.ff(h)                         # transform
+        scores = self.span_score(h).squeeze(-1)
+        type_logits = self.type_head(h)
         return scores, type_logits
+
 
 class PartitionSpanSegmenter(nn.Module):
     """
@@ -38,12 +55,20 @@ class PartitionSpanSegmenter(nn.Module):
         - CE loss to pick gold end e_k among those candidates
       Plus type loss on the gold span itself.
     """
-    def __init__(self, model_name: str, num_types: int = 3, max_span_len: int = 50):
+    def __init__(self, model_name: str, num_types: int = 3, max_span_len: int = 50,
+                 proj_dim: int = 768, dropout: float = 0.1):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name)
         hidden = self.encoder.config.hidden_size
-        self.max_span_len = max_length = max_span_len
-        self.span_head = SpanHead(span_hidden_size=hidden * 4, num_types=num_types)
+        self.max_span_len = max_span_len
+
+        self.span_head = SpanHead(
+            span_hidden_size=hidden * 4,
+            num_types=num_types,
+            proj_dim=proj_dim,
+            dropout=dropout,
+        )
+        self.best_val_f1 = 0
 
     def _span_repr(self, h_b, cls_b, s: int, e: int):
         """
