@@ -8,43 +8,24 @@ from torch.utils.data import DataLoader
 
 from transformers import AutoTokenizer, AutoModel, get_linear_schedule_with_warmup
 
-
 class SpanHead(nn.Module):
-
-    def __init__(self, span_hidden_size: int, num_types: int,
-                 proj_dim: int = 768, dropout: float = 0.1):
+    def __init__(self, span_hidden_size: int, num_types: int, dropout: float = 0.1):
         super().__init__()
-        
-        # Normalize heterogeneous concatenation
-        self.pre_norm = nn.LayerNorm(span_hidden_size)
 
-        # Nonlinear projection layer
-        self.proj = nn.Sequential(
-            nn.Linear(span_hidden_size, proj_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-        )
-
-        # FF block in projected space
         self.ff = nn.Sequential(
-            nn.Linear(proj_dim, proj_dim),
+            nn.Linear(span_hidden_size, span_hidden_size),
             nn.GELU(),
-            nn.Dropout(dropout),
+            nn.Dropout(dropout)
         )
 
-        # Final heads
-        self.span_score = nn.Linear(proj_dim, 1)
-        self.type_head  = nn.Linear(proj_dim, num_types)
-        self.best_val_f1 = 0.0
+        self.span_score = nn.Linear(span_hidden_size, 1)
+        self.type_head  = nn.Linear(span_hidden_size, num_types)
 
-    def forward(self, span_repr: torch.Tensor):
-        span_repr = self.pre_norm(span_repr)   # ★ important
-        h = self.proj(span_repr)               # nonlinear projection
-        h = self.ff(h)                         # transform
+    def forward(self, span_repr):
+        h = self.ff(span_repr)
         scores = self.span_score(h).squeeze(-1)
         type_logits = self.type_head(h)
         return scores, type_logits
-
 
 class PartitionSpanSegmenter(nn.Module):
     """
@@ -56,7 +37,7 @@ class PartitionSpanSegmenter(nn.Module):
       Plus type loss on the gold span itself.
     """
     def __init__(self, model_name: str, num_types: int = 3, max_span_len: int = 50,
-                 proj_dim: int = 768, dropout: float = 0.1):
+                  dropout: float = 0.1):
         super().__init__()
         self.encoder = AutoModel.from_pretrained(model_name)
         hidden = self.encoder.config.hidden_size
@@ -65,7 +46,6 @@ class PartitionSpanSegmenter(nn.Module):
         self.span_head = SpanHead(
             span_hidden_size=hidden * 4,
             num_types=num_types,
-            proj_dim=proj_dim,
             dropout=dropout,
         )
         self.best_val_f1 = 0

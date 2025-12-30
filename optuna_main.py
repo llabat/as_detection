@@ -29,12 +29,10 @@ def objective(trial, as_dataset, config, model_name, type2id):
     # -----------------------------
     # 1. Sample hyperparameters
     # -----------------------------
-    lr = trial.suggest_loguniform("lr", 1e-5, 5e-4)
-    proj_dim = trial.suggest_categorical("proj_dim", [384, 768, 1024, 1536, 3072])
-    dropout = trial.suggest_float("dropout", 0.0, 0.4)
-    type_loss_weight = trial.suggest_float("type_loss_weight", 0.5, 2.0)
-    max_span_len = trial.suggest_int("max_span_len", 150, 300)
-
+    lr = trial.suggest_loguniform("lr", 3e-5, 1e-4)
+    dropout = trial.suggest_float("dropout", 0.05, 0.25)
+    type_loss_weight = trial.suggest_float("type_loss_weight", 0.8, 1.4)
+    max_span_len = trial.suggest_int("max_span_len", 200, 280)
     # -----------------------------
     # 2. Start WandB trial run
     # -----------------------------
@@ -44,7 +42,6 @@ def objective(trial, as_dataset, config, model_name, type2id):
         config={
             "trial": trial.number,
             "lr": lr,
-            "proj_dim": proj_dim,
             "dropout": dropout,
             "type_loss_weight": type_loss_weight,
             "max_span_len": max_span_len,
@@ -69,8 +66,9 @@ def objective(trial, as_dataset, config, model_name, type2id):
         lr=lr,
         max_span_len=max_span_len,
         type_loss_weight=type_loss_weight,
-        proj_dim=proj_dim,
         dropout=dropout,
+        trial = trial,
+        wandb_run = wandb_run
     )
 
     # -----------------------------
@@ -112,13 +110,18 @@ if __name__ == "__main__":
     # Define Optuna study storage (resumable)
     # ----------------------------------------
     study_path = f"{config['model_output_dir']}/optuna_study.db"
+    pruner = optuna.pruners.MedianPruner(
+    n_startup_trials=10,     # do not prune first 10 trials
+    n_warmup_steps=1,        # allow first epoch to run
+)
 
     study = optuna.create_study(
-        direction="maximize",
-        study_name="as_span_segmentation",
-        storage=f"sqlite:///{study_path}",
-        load_if_exists=True,
-    )
+    direction="maximize",
+    study_name="as_span_segmentation",
+    storage=f"sqlite:///{study_path}",
+    load_if_exists=True,
+    pruner=pruner,
+)
 
     # ----------------------------------------
     # Optimize

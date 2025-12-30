@@ -3,15 +3,14 @@ model_name: "almanach/camembertav2-base"
 path2json: "/home/labat/granddebat/gdnannotanalysis-main/gold/AS_EXTRACTION/gold.jsonl"
 model_output_dir: "/home/labat/granddebat/as_extraction/checkpoints"
 
-num_epochs: 3
+num_epochs: 10
 batch_size: 4
 
 # Optional defaults (Optuna will override these anyway)
 lr: "5e-5"
 max_span_len: 250
 type_loss_weight: 1.0
-proj_dim: 768
 dropout: 0.1
 
 # Optuna hyperparameters
-n_trials: 100
+n_trials: 50

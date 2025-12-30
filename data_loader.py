@@ -66,6 +66,7 @@ class SegmentPreprocessor:
         encoding["span_starts"] = span_starts
         encoding["span_ends"] = span_ends
         encoding["span_types"] = span_types
+        encoding["text"] = text
         
         return encoding
         
@@ -78,14 +79,17 @@ class SpanCollator:
         span_starts = [ex["span_starts"] for ex in batch]
         span_ends   = [ex["span_ends"] for ex in batch]
         span_types  = [ex["span_types"] for ex in batch]
-
+        texts       = [ex["text"] for ex in batch]   # NEW
+    
         keep = ("input_ids", "attention_mask", "token_type_ids")
         batch_for_pad = [{k: ex[k] for k in keep if k in ex} for ex in batch]
-
+    
         padded = self.pad(batch_for_pad)
         padded["span_starts"] = span_starts
         padded["span_ends"]   = span_ends
         padded["span_types"]  = span_types
+        padded["text"]        = texts                 # make available to validation
+    
         return padded
         
         
@@ -119,7 +123,7 @@ def build_dataset_from_gold(path2json, tokenizer, type2id, max_length=512):
     encoded = dataset.map(
         preproc,
         batched=False,
-        remove_columns=["text", "segments"]
+        remove_columns=["segments"]
     )
 
     # Build DatasetDict from the existing split column
